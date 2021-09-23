@@ -8,14 +8,14 @@ const path = require("path");
 const mongoose = require("mongoose");
 const Address = require("./address");
 
-const uri = mongouri
+const configurator = require('./Config/config')
 
 var web3 = new Web3(
-  "https://ropsten.infura.io/v3/17967a59c84d4fb6be956954038f1715"
+  configurator.InfuraURL
 );
 
 const connectDB = async () => {
-  await mongoose.connect(uri);
+  await mongoose.connect(configurator.mongoURI);
   console.log("Connected to database");
 };
 connectDB();
@@ -23,27 +23,36 @@ connectDB();
 const app = express();
 const fs = require("fs");
 const bodyParser = require("body-parser");
-
-const inputsro = path.join(__dirname, "./sro.json");
-var contractAbi = fs.readFileSync(inputsro, "utf-8");
-var contractAddress = "0x556962f2929c3D9D8A7cc14410356ef0FDd201c3";
-const myContract = new web3.eth.Contract(
-  JSON.parse(contractAbi),
-  contractAddress
-);
-
 app.use(bodyParser.json());
 
-app.get("/", (req, res) => {
-  res.send("Start server");
-});
+const pKey = Buffer.from(configurator.privateKey, "hex");
+
+const inputrkm = path.join(__dirname, "./rkm.json");
+const inputsro = path.join(__dirname, "./sro.json");
+
+
+var contractAbiRKM = fs.readFileSync(inputrkm, "utf-8");
+var contractAddressRKM = "0x3e44072e37c959f748f361Ae4ED3b39E952E515c";
+var myContractRKM = new web3.eth.Contract(
+  JSON.parse(contractAbiRKM),
+  contractAddressRKM
+);
+
+var contractAbiSRO = fs.readFileSync(inputsro, "utf-8");
+var contractAddressSRO = "0x556962f2929c3D9D8A7cc14410356ef0FDd201c3";
+var myContractSRO = new web3.eth.Contract(
+  JSON.parse(contractAbiSRO),
+  contractAddressSRO
+);
+
+
+
 
 app.post("/address", (req, res) => {
   console.log("Started");
   let userId = req.body.user_id;
-  const mnemonic =
-    "damp scout boat garlic diary miss extra artist crowd ethics motor naive";
-  const seed = bip39.mnemonicToSeed(mnemonic).then((seed) => {
+
+  const seed = bip39.mnemonicToSeed(configurator.mnemonic).then((seed) => {
     const root = hdKey.fromMasterSeed(seed);
     const addrNode = root.derive(`m/44'/60'/0'/0'/${userId}`);
     const pubkey = ethutils.privateToPublic(addrNode._privateKey);
@@ -74,23 +83,16 @@ app.post("/transferBalance", async (req, res) => {
   let user_id = req.body.from_user_id;
     let toAddress = req.body.toAddress;
     let value = req.body.value;
-  const mnemonic =
-    "damp scout boat garlic diary miss extra artist crowd ethics motor naive";
-  const seed = await bip39.mnemonicToSeed(mnemonic);
-  const root = hdKey.fromMasterSeed(seed);
-  const addrNode = root.derive(`m/44'/60'/0'/0/${user_id}`);
-  const privateKey = addrNode._privateKey.toString("hex");
-  const pkey = Buffer.from("6b375a3318f5081eeeeb08abfe6296eca1bc01fb2ffdcd3e11a527dc1fcc7241", "hex");
+ 
 
 //   let user = await Address.find({ user_id: { $eq: user_id } });
 //   let UserData = user[0]._doc;
 //   let fromAddress = UserData.address;
-var fromAddress="0x3e44072e37c959f748f361Ae4ED3b39E952E515c"
 //   var amount = web3.utils.toBN(value, "ether");
 
-  var count = await web3.eth.getTransactionCount(fromAddress);
+  var count = await web3.eth.getTransactionCount(configurator.fromAddress);
   var rawTransaction = {
-    "from": fromAddress,
+    "from": configurator.fromAddress,
     "nonce": web3.utils.toHex(count),
     "gasPrice": web3.utils.toHex(20 * 1e9),
     "gasLimit": "0x250CA",
@@ -100,7 +102,7 @@ var fromAddress="0x3e44072e37c959f748f361Ae4ED3b39E952E515c"
 };  
 
   const Transaction = new Tx(rawTransaction, {chain:'ropsten', hardfork: 'petersburg'});
-  Transaction.sign(pkey);
+  Transaction.sign(pKey);
 
   var serialized = Transaction.serialize().toString("hex");
   web3.eth
@@ -110,6 +112,96 @@ var fromAddress="0x3e44072e37c959f748f361Ae4ED3b39E952E515c"
       res.send({ "Transaction Hash": hash });
     });
 });
+
+
+
+app.post("/transferToken", async (req, res) => {
+  let token = req.body.token;
+  let toAddress = req.body.toAddress;
+  let value = req.body.value;
+
+  var contractAddress = ""
+  var myContract = ""
+  if(token == "RKM"){
+      contractAddress = contractAddressRKM
+      myContract = myContractRKM 
+  }
+  if(token == "SRO") {
+      contractAddress = contractAddressSRO
+      myContract = myContractSRO
+  }
+
+  let amount = web3.utils.toWei(value, "ether");
+  let count = await web3.eth.getTransactionCount(configurator.fromAddress);
+
+  let rawTransaction = {
+    "from": configurator.fromAddress,
+    "to": contractAddress,
+    "gasPrice": web3.utils.toHex(20 * 1e9),
+    "gasLimit": web3.utils.toHex(210000),
+    "data": myContract.methods.transfer(toAddress, amount).encodeABI(),
+    "value": "0x0",
+    "nonce": web3.utils.toHex(count),
+  };
+
+  const Transaction = new Tx(rawTransaction, {
+    chain: "ropsten",
+    hardfork: "petersburg",
+  });
+  Transaction.sign(pKey);
+
+  var serialized = Transaction.serialize().toString("hex");
+  web3.eth.sendSignedTransaction("0x" + serialized).on("transactionHash", function(hash) {
+      console.log("transaction Hash :", hash)
+      res.send({ "Transaction Hash from RKM" : hash})
+  })
+    
+
+});
+
+
+
+app.post("/sendETH", async (req, res) => {
+  let user_id = req.body.from_user_id;
+  let toAddress = req.body.toAddress;
+  let value = req.body.value;
+
+  const seed = await bip39.mnemonicToSeed(configurator.mnemonic);
+  const root = hdKey.fromMasterSeed(seed);
+  const addrNode = root.derive(`m/44'/60'/0'/0/${user_id}`);
+  const privateKey = addrNode._privateKey.toString("hex");
+  const pKey = Buffer.from(privateKey, 'hex')
+
+  let user = await Address.find({ user_id: { $eq: user_id } });
+  let UserData = user[0]._doc;
+  let fromAddress = UserData.address;
+
+  var amount = web3.utils.toWei(value, "ether");
+  let count = await web3.eth.getTransactionCount(fromAddress);
+
+  var rawTransaction = {
+    "from": fromAddress,
+    "to": toAddress,
+    "gasPrice": web3.utils.toHex(20 * 1e9),
+    "gasLimit" :web3.utils.toHex(210000), 
+    "value":web3.utils.toHex(amount),
+    "data": "0x0",
+    "nonce": web3.utils.toHex(count),
+  };
+
+  const Transaction = new Tx(rawTransaction, {chain:'ropsten', hardfork: 'petersburg'})
+  Transaction.sign(pKey);
+
+  var serialized = Transaction.serialize().toString("hex");
+  web3.eth
+    .sendSignedTransaction("0x" + serialized)
+    .on("transactionHash", function (hash) {
+      res.send({ "Transaction Hash": hash });
+    });
+});
+
+
+
 
 app.listen(3001, () => {
   console.log("Server started on port 3001");
